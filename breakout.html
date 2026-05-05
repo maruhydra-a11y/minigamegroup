@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>🧱 벽돌 깨기</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    .game-nav {
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      height: 48px;
+      background: rgba(13,15,26,0.96);
+      backdrop-filter: blur(10px);
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+      display: flex;
+      align-items: center;
+      padding: 0 20px;
+      gap: 12px;
+      z-index: 100;
+    }
+    .home-btn {
+      color: #64748b;
+      text-decoration: none;
+      font-size: 0.88rem;
+      font-weight: 500;
+      transition: color 0.18s;
+    }
+    .home-btn:hover { color: #e2e8f0; }
+    .nav-title { color: #475569; font-size: 0.88rem; }
+
+    body {
+      background: #0d0f1a;
+      color: #e2e8f0;
+      font-family: 'Segoe UI', 'Apple SD Gothic Neo', sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 60px 16px 32px;
+      user-select: none;
+    }
+
+    h1 {
+      font-size: 2.2rem;
+      font-weight: 900;
+      color: #ef4444;
+      letter-spacing: -1px;
+      margin-bottom: 4px;
+    }
+    .subtitle { color: #64748b; font-size: 0.85rem; margin-bottom: 14px; }
+
+    .stats {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+    .stat-box {
+      background: #161f30;
+      border: 1px solid rgba(255,255,255,0.07);
+      border-radius: 10px;
+      padding: 7px 18px;
+      text-align: center;
+      min-width: 90px;
+    }
+    .stat-label {
+      font-size: 0.65rem;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      color: #64748b;
+      margin-bottom: 2px;
+    }
+    .stat-value {
+      font-size: 1.4rem;
+      font-weight: 800;
+      color: #ef4444;
+    }
+
+    #canvas-wrap { position: relative; }
+
+    canvas {
+      display: block;
+      border-radius: 12px;
+      border: 2px solid rgba(239,68,68,0.2);
+      cursor: none;
+    }
+
+    .hint {
+      color: #475569;
+      font-size: 0.78rem;
+      margin-top: 12px;
+      text-align: center;
+      line-height: 1.7;
+    }
+  </style>
+</head>
+<body>
+
+<nav class="game-nav">
+  <a href="index.html" class="home-btn">← 홈으로</a>
+  <span class="nav-title">🧱 벽돌 깨기</span>
+</nav>
+
+<h1>🧱 벽돌 깨기</h1>
+<p class="subtitle">패들로 공을 튕겨 벽돌을 모두 부수세요</p>
+
+<div class="stats">
+  <div class="stat-box">
+    <div class="stat-label">점수</div>
+    <div class="stat-value" id="score">0</div>
+  </div>
+  <div class="stat-box">
+    <div class="stat-label">목숨</div>
+    <div class="stat-value" id="lives">❤️❤️❤️</div>
+  </div>
+</div>
+
+<div id="canvas-wrap">
+  <canvas id="c"></canvas>
+</div>
+
+<p class="hint">마우스 이동으로 패들 조작 · 좌우 화살표 키도 사용 가능 · 클릭 또는 Space로 시작</p>
+
+<script>
+  const W = 560, H = 420;
+  const canvas = document.getElementById('c');
+  const ctx    = canvas.getContext('2d');
+  canvas.width  = W;
+  canvas.height = H;
+
+  /* ── CONSTANTS ── */
+  const PAD_W   = 90, PAD_H  = 12, PAD_Y = H - 30;
+  const BALL_R  = 7;
+  const BRICK_COLS = 10, BRICK_ROWS = 6;
+  const BRICK_W = 46, BRICK_H = 18, BRICK_GAP = 5;
+  const BRICK_TOP = 55, BRICK_LEFT = 15;
+
+  const ROW_COLORS = ['#ef4444','#f97316','#eab308','#22c55e','#3b82f6','#a855f7'];
+  const ROW_SCORES = [60,50,40,30,20,10];
+
+  /* ── STATE ── */
+  let padX, ballX, ballY, ballDX, ballDY, bricks;
+  let score, lives, state, keyLeft, keyRight, animID;
+  let particles = [];
+
+  function init() {
+    padX  = W/2 - PAD_W/2;
+    ballX = W/2;
+    ballY = PAD_Y - BALL_R - 2;
+    ballDX = 3.5 * (Math.random() < 0.5 ? 1 : -1);
+    ballDY = -4;
+    score = 0;
+    lives = 3;
+    state = 'idle';
+    keyLeft = false; keyRight = false;
+    particles = [];
+    buildBricks();
+    updateHUD();
+    if (animID) cancelAnimationFrame(animID);
+    animID = requestAnimationFrame(loop);
+  }
+
+  function buildBricks() {
+    bricks = [];
+    for (let r = 0; r < BRICK_ROWS; r++)
+      for (let c = 0; c < BRICK_COLS; c++)
+        bricks.push({
+          x: BRICK_LEFT + c*(BRICK_W+BRICK_GAP),
+          y: BRICK_TOP  + r*(BRICK_H+BRICK_GAP),
+          alive: true,
+          color: ROW_COLORS[r],
+          pts: ROW_SCORES[r],
+        });
+  }
+
+  /* ── PARTICLES ── */
+  function spawnParticles(x, y, color) {
+    for (let i = 0; i < 8; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const speed = 1.5 + Math.random() * 2.5;
+      particles.push({
+        x, y,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed,
+        life: 1,
+        color,
+        r: 2 + Math.random() * 2,
+      });
+    }
+  }
+
+  /* ── GAME LOOP ── */
+  function loop() {
+    animID = requestAnimationFrame(loop);
+    update();
+    draw();
+  }
+
+  function update() {
+    // Paddle keyboard movement
+    if (keyLeft)  padX = Math.max(0, padX - 5);
+    if (keyRight) padX = Math.min(W - PAD_W, padX + 5);
+
+    if (state !== 'running') return;
+
+    // Ball movement
+    ballX += ballDX;
+    ballY += ballDY;
+
+    // Wall collisions
+    if (ballX - BALL_R <= 0)   { ballX = BALL_R;       ballDX = Math.abs(ballDX); }
+    if (ballX + BALL_R >= W)   { ballX = W - BALL_R;   ballDX = -Math.abs(ballDX); }
+    if (ballY - BALL_R <= 0)   { ballY = BALL_R;       ballDY = Math.abs(ballDY); }
+
+    // Paddle collision
+    if (ballY + BALL_R >= PAD_Y &&
+        ballY + BALL_R <= PAD_Y + PAD_H &&
+        ballX >= padX - BALL_R &&
+        ballX <= padX + PAD_W + BALL_R) {
+      ballY = PAD_Y - BALL_R;
+      const hit = (ballX - (padX + PAD_W/2)) / (PAD_W/2);
+      ballDX = hit * 5;
+      ballDY = -Math.abs(ballDY);
+      const spd = Math.min(7, Math.sqrt(ballDX*ballDX + ballDY*ballDY));
+      const ang = Math.atan2(ballDY, ballDX);
+      ballDX = Math.cos(ang) * spd;
+      ballDY = Math.sin(ang) * spd;
+    }
+
+    // Bottom — lose life
+    if (ballY - BALL_R > H) {
+      lives--;
+      updateHUD();
+      if (lives <= 0) { state = 'lose'; return; }
+      state = 'idle';
+      ballX = padX + PAD_W/2;
+      ballY = PAD_Y - BALL_R - 2;
+      ballDX = 3.5 * (Math.random() < 0.5 ? 1 : -1);
+      ballDY = -4;
+    }
+
+    // Brick collisions
+    for (const b of bricks) {
+      if (!b.alive) continue;
+      if (ballX + BALL_R > b.x && ballX - BALL_R < b.x + BRICK_W &&
+          ballY + BALL_R > b.y && ballY - BALL_R < b.y + BRICK_H) {
+
+        b.alive = false;
+        score += b.pts;
+        spawnParticles(b.x + BRICK_W/2, b.y + BRICK_H/2, b.color);
+        updateHUD();
+
+        // Determine bounce axis
+        const overlapL = (ballX + BALL_R) - b.x;
+        const overlapR = (b.x + BRICK_W) - (ballX - BALL_R);
+        const overlapT = (ballY + BALL_R) - b.y;
+        const overlapB = (b.y + BRICK_H) - (ballY - BALL_R);
+        const minOverlap = Math.min(overlapL, overlapR, overlapT, overlapB);
+        if (minOverlap === overlapT || minOverlap === overlapB) ballDY = -ballDY;
+        else ballDX = -ballDX;
+        break;
+      }
+    }
+
+    // Particles
+    particles = particles.filter(p => p.life > 0);
+    particles.forEach(p => {
+      p.x += p.vx; p.y += p.vy;
+      p.vy += 0.1;
+      p.life -= 0.04;
+    });
+
+    // Win
+    if (bricks.every(b => !b.alive)) state = 'win';
+  }
+
+  /* ── DRAW ── */
+  function draw() {
+    ctx.fillStyle = '#111827';
+    ctx.fillRect(0, 0, W, H);
+
+    // Bricks
+    bricks.forEach(b => {
+      if (!b.alive) return;
+      ctx.fillStyle = b.color;
+      ctx.shadowBlur = 4;
+      ctx.shadowColor = b.color;
+      ctx.beginPath();
+      ctx.roundRect(b.x, b.y, BRICK_W, BRICK_H, 4);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+    });
+
+    // Particles
+    particles.forEach(p => {
+      ctx.save();
+      ctx.globalAlpha = p.life;
+      ctx.fillStyle = p.color;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.r, 0, Math.PI*2);
+      ctx.fill();
+      ctx.restore();
+    });
+
+    // Paddle
+    const gradient = ctx.createLinearGradient(padX, PAD_Y, padX+PAD_W, PAD_Y+PAD_H);
+    gradient.addColorStop(0, '#ef4444');
+    gradient.addColorStop(1, '#f97316');
+    ctx.fillStyle = gradient;
+    ctx.shadowBlur = 8;
+    ctx.shadowColor = '#ef4444';
+    ctx.beginPath();
+    ctx.roundRect(padX, PAD_Y, PAD_W, PAD_H, 6);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+
+    // Ball
+    ctx.save();
+    ctx.shadowBlur = 12;
+    ctx.shadowColor = '#fff';
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(ballX, ballY, BALL_R, 0, Math.PI*2);
+    ctx.fill();
+    ctx.restore();
+
+    // Overlay messages
+    if (state === 'idle') drawOverlay('클릭 또는 Space로 발사!', '#e2e8f0');
+    if (state === 'win')  drawOverlay('🎉 클리어! Space로 다시', '#22c55e');
+    if (state === 'lose') drawOverlay('😵 게임 오버! Space로 다시', '#ef4444');
+  }
+
+  function drawOverlay(msg, color) {
+    ctx.fillStyle = 'rgba(13,15,26,0.55)';
+    ctx.fillRect(0, H/2 - 30, W, 60);
+    ctx.fillStyle = color;
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 20px Segoe UI';
+    ctx.fillText(msg, W/2, H/2 + 7);
+  }
+
+  function updateHUD() {
+    document.getElementById('score').textContent = score;
+    document.getElementById('lives').textContent = '❤️'.repeat(Math.max(0, lives));
+  }
+
+  /* ── INPUT ── */
+  canvas.addEventListener('mousemove', e => {
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = W / rect.width;
+    padX = (e.clientX - rect.left) * scaleX - PAD_W/2;
+    padX = Math.max(0, Math.min(W - PAD_W, padX));
+    if (state === 'idle' || state === 'running') {
+      if (state === 'idle') {
+        ballX = padX + PAD_W/2;
+        ballY = PAD_Y - BALL_R - 2;
+      }
+    }
+  });
+
+  function startBall() {
+    if (state === 'win' || state === 'lose') { init(); return; }
+    if (state === 'idle') state = 'running';
+  }
+
+  canvas.addEventListener('click', startBall);
+
+  // Touch
+  canvas.addEventListener('touchmove', e => {
+    e.preventDefault();
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = W / rect.width;
+    padX = (e.touches[0].clientX - rect.left) * scaleX - PAD_W/2;
+    padX = Math.max(0, Math.min(W - PAD_W, padX));
+    if (state === 'idle') { ballX = padX + PAD_W/2; ballY = PAD_Y - BALL_R - 2; }
+  }, { passive: false });
+
+  canvas.addEventListener('touchstart', e => {
+    e.preventDefault();
+    startBall();
+  }, { passive: false });
+
+  document.addEventListener('keydown', e => {
+    if (e.key === 'ArrowLeft'  || e.key === 'a' || e.key === 'A') { keyLeft  = true; e.preventDefault(); }
+    if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') { keyRight = true; e.preventDefault(); }
+    if (e.key === ' ') { e.preventDefault(); startBall(); }
+  });
+  document.addEventListener('keyup', e => {
+    if (e.key === 'ArrowLeft'  || e.key === 'a' || e.key === 'A') keyLeft  = false;
+    if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') keyRight = false;
+  });
+
+  init();
+</script>
+</body>
+</html>

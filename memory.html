@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>🃏 기억력 카드</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    .game-nav {
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      height: 48px;
+      background: rgba(13,15,26,0.96);
+      backdrop-filter: blur(10px);
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+      display: flex;
+      align-items: center;
+      padding: 0 20px;
+      gap: 12px;
+      z-index: 100;
+    }
+    .home-btn {
+      color: #64748b;
+      text-decoration: none;
+      font-size: 0.88rem;
+      font-weight: 500;
+      transition: color 0.18s;
+    }
+    .home-btn:hover { color: #e2e8f0; }
+    .nav-title { color: #475569; font-size: 0.88rem; }
+
+    body {
+      background: #0d0f1a;
+      color: #e2e8f0;
+      font-family: 'Segoe UI', 'Apple SD Gothic Neo', sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 60px 16px 32px;
+      user-select: none;
+    }
+
+    h1 {
+      font-size: 2.2rem;
+      font-weight: 900;
+      color: #a855f7;
+      letter-spacing: -1px;
+      margin-bottom: 4px;
+    }
+    .subtitle { color: #64748b; font-size: 0.85rem; margin-bottom: 18px; }
+
+    /* Stats bar */
+    .stats {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+    .stat-box {
+      background: #161f30;
+      border: 1px solid rgba(255,255,255,0.07);
+      border-radius: 10px;
+      padding: 8px 18px;
+      text-align: center;
+      min-width: 90px;
+    }
+    .stat-label {
+      font-size: 0.65rem;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      color: #64748b;
+      margin-bottom: 2px;
+    }
+    .stat-value {
+      font-size: 1.4rem;
+      font-weight: 800;
+      color: #a855f7;
+    }
+
+    /* Card grid */
+    #board {
+      display: grid;
+      grid-template-columns: repeat(4, 90px);
+      grid-template-rows: repeat(4, 90px);
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+
+    /* Card flip */
+    .card-wrap {
+      perspective: 600px;
+      cursor: pointer;
+    }
+
+    .card-inner {
+      width: 90px;
+      height: 90px;
+      position: relative;
+      transform-style: preserve-3d;
+      transition: transform 0.38s ease;
+      border-radius: 12px;
+    }
+
+    .card-wrap.flipped .card-inner,
+    .card-wrap.matched .card-inner {
+      transform: rotateY(180deg);
+    }
+
+    .card-front, .card-back {
+      position: absolute;
+      inset: 0;
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      backface-visibility: hidden;
+      -webkit-backface-visibility: hidden;
+    }
+
+    .card-back {
+      background: #1e2d45;
+      border: 2px solid rgba(168,85,247,0.25);
+      font-size: 2rem;
+      color: rgba(168,85,247,0.4);
+    }
+    .card-back::after { content: '?'; }
+
+    .card-front {
+      background: #1a2235;
+      border: 2px solid rgba(168,85,247,0.6);
+      transform: rotateY(180deg);
+      font-size: 2.6rem;
+    }
+
+    .card-wrap.matched .card-front {
+      background: rgba(168,85,247,0.15);
+      border-color: #a855f7;
+    }
+
+    .card-wrap:not(.flipped):not(.matched):hover .card-inner {
+      transform: rotateY(12deg);
+    }
+
+    /* Button */
+    .btn {
+      background: rgba(168,85,247,0.15);
+      color: #a855f7;
+      border: 1px solid rgba(168,85,247,0.35);
+      border-radius: 8px;
+      padding: 8px 20px;
+      font-size: 0.88rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: background 0.18s;
+      margin-bottom: 14px;
+    }
+    .btn:hover { background: rgba(168,85,247,0.28); }
+
+    /* Win overlay */
+    #win {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(13,15,26,0.88);
+      backdrop-filter: blur(8px);
+      z-index: 200;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 14px;
+      text-align: center;
+    }
+    #win.show { display: flex; }
+    #win h2 { font-size: 3rem; font-weight: 900; }
+    #win p  { color: #94a3b8; font-size: 1rem; line-height: 1.8; }
+    #win-btn {
+      background: #a855f7;
+      color: #fff;
+      border: none;
+      border-radius: 10px;
+      padding: 12px 32px;
+      font-size: 1rem;
+      font-weight: 800;
+      cursor: pointer;
+      margin-top: 8px;
+      transition: opacity 0.18s;
+    }
+    #win-btn:hover { opacity: 0.85; }
+
+    @media (max-width: 440px) {
+      #board {
+        grid-template-columns: repeat(4, 70px);
+        grid-template-rows: repeat(4, 70px);
+        gap: 8px;
+      }
+      .card-inner, .card-front, .card-back { width: 70px; height: 70px; }
+      .card-front { font-size: 2rem; }
+      .card-back  { font-size: 1.5rem; }
+    }
+  </style>
+</head>
+<body>
+
+<nav class="game-nav">
+  <a href="index.html" class="home-btn">← 홈으로</a>
+  <span class="nav-title">🃏 기억력 카드</span>
+</nav>
+
+<h1>🃏 기억력 카드</h1>
+<p class="subtitle">같은 그림 쌍을 모두 맞추세요</p>
+
+<div class="stats">
+  <div class="stat-box">
+    <div class="stat-label">이동</div>
+    <div class="stat-value" id="moves">0</div>
+  </div>
+  <div class="stat-box">
+    <div class="stat-label">시간</div>
+    <div class="stat-value" id="timer">0s</div>
+  </div>
+  <div class="stat-box">
+    <div class="stat-label">완성</div>
+    <div class="stat-value" id="matched">0/8</div>
+  </div>
+</div>
+
+<div id="board"></div>
+
+<button class="btn" id="restart-btn">새 게임</button>
+
+<!-- Win Overlay -->
+<div id="win">
+  <h2>🎉 클리어!</h2>
+  <p id="win-stats"></p>
+  <button id="win-btn">다시 하기</button>
+</div>
+
+<script>
+  const EMOJIS = ['🐶','🐱','🦊','🐸','🐻','🐼','🦁','🐯'];
+
+  let cards, first, second, locked, matchCount, moves, seconds, timerID, started;
+
+  function shuffle(arr) {
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i+1));
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    return arr;
+  }
+
+  function init() {
+    clearInterval(timerID);
+    first = null; second = null; locked = false;
+    matchCount = 0; moves = 0; seconds = 0; started = false;
+    updateStats();
+    document.getElementById('win').classList.remove('show');
+
+    cards = shuffle([...EMOJIS, ...EMOJIS]);
+    renderBoard();
+  }
+
+  function renderBoard() {
+    const board = document.getElementById('board');
+    board.innerHTML = '';
+    cards.forEach((emoji, i) => {
+      const wrap = document.createElement('div');
+      wrap.className = 'card-wrap';
+      wrap.dataset.index = i;
+      wrap.dataset.emoji = emoji;
+      wrap.innerHTML = `
+        <div class="card-inner">
+          <div class="card-back"></div>
+          <div class="card-front">${emoji}</div>
+        </div>`;
+      wrap.addEventListener('click', onCardClick);
+      board.appendChild(wrap);
+    });
+  }
+
+  function onCardClick() {
+    if (locked) return;
+    if (this.classList.contains('flipped') || this.classList.contains('matched')) return;
+
+    if (!started) {
+      started = true;
+      timerID = setInterval(() => {
+        seconds++;
+        document.getElementById('timer').textContent = seconds + 's';
+      }, 1000);
+    }
+
+    this.classList.add('flipped');
+
+    if (!first) {
+      first = this;
+      return;
+    }
+
+    second = this;
+    moves++;
+    document.getElementById('moves').textContent = moves;
+    locked = true;
+
+    if (first.dataset.emoji === second.dataset.emoji) {
+      first.classList.add('matched');
+      second.classList.add('matched');
+      first = null; second = null; locked = false;
+      matchCount++;
+      document.getElementById('matched').textContent = `${matchCount}/8`;
+      if (matchCount === 8) win();
+    } else {
+      const a = first, b = second;
+      setTimeout(() => {
+        a.classList.remove('flipped');
+        b.classList.remove('flipped');
+        first = null; second = null; locked = false;
+      }, 900);
+    }
+  }
+
+  function win() {
+    clearInterval(timerID);
+    document.getElementById('win-stats').textContent =
+      `${seconds}초 · ${moves}번 이동으로 클리어!`;
+    setTimeout(() => document.getElementById('win').classList.add('show'), 400);
+  }
+
+  function updateStats() {
+    document.getElementById('moves').textContent   = moves || 0;
+    document.getElementById('timer').textContent   = '0s';
+    document.getElementById('matched').textContent = '0/8';
+  }
+
+  document.getElementById('restart-btn').onclick = init;
+  document.getElementById('win-btn').onclick      = init;
+
+  init();
+</script>
+</body>
+</html>

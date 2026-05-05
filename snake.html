@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>🐍 뱀 게임</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    .game-nav {
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      height: 48px;
+      background: rgba(13,15,26,0.96);
+      backdrop-filter: blur(10px);
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+      display: flex;
+      align-items: center;
+      padding: 0 20px;
+      gap: 12px;
+      z-index: 100;
+    }
+    .home-btn {
+      color: #64748b;
+      text-decoration: none;
+      font-size: 0.88rem;
+      font-weight: 500;
+      transition: color 0.18s;
+    }
+    .home-btn:hover { color: #e2e8f0; }
+    .nav-title { color: #475569; font-size: 0.88rem; }
+
+    body {
+      background: #0d0f1a;
+      color: #e2e8f0;
+      font-family: 'Segoe UI', 'Apple SD Gothic Neo', sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 60px 16px 32px;
+      user-select: none;
+    }
+
+    h1 {
+      font-size: 2.4rem;
+      font-weight: 900;
+      color: #4caf50;
+      letter-spacing: -1px;
+      margin-bottom: 4px;
+    }
+    .subtitle { color: #64748b; font-size: 0.85rem; margin-bottom: 18px; }
+
+    .score-bar {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .score-box {
+      background: #161f30;
+      border: 1px solid rgba(255,255,255,0.07);
+      border-radius: 10px;
+      padding: 8px 20px;
+      text-align: center;
+      min-width: 100px;
+    }
+    .score-label {
+      font-size: 0.68rem;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      color: #64748b;
+      margin-bottom: 2px;
+    }
+    .score-value {
+      font-size: 1.5rem;
+      font-weight: 800;
+      color: #4caf50;
+    }
+
+    #canvas-wrap { position: relative; }
+
+    canvas {
+      display: block;
+      border-radius: 12px;
+      border: 2px solid rgba(76,175,80,0.2);
+    }
+
+    #msg-layer {
+      position: absolute;
+      inset: 0;
+      border-radius: 12px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      pointer-events: none;
+    }
+    #msg-layer.hidden { display: none; }
+
+    .msg-title  { font-size: 2rem; font-weight: 900; }
+    .msg-body   { color: #94a3b8; font-size: 1rem; }
+    .msg-hint   { color: #475569; font-size: 0.85rem; }
+
+    .hint { color: #475569; font-size: 0.78rem; margin-top: 14px; text-align: center; line-height: 1.7; }
+
+    /* Mobile touch buttons */
+    .dpad {
+      display: none;
+      grid-template-columns: repeat(3, 52px);
+      grid-template-rows: repeat(2, 52px);
+      gap: 6px;
+      margin-top: 18px;
+    }
+    .dpad-btn {
+      background: #161f30;
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 10px;
+      color: #4caf50;
+      font-size: 1.3rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: background 0.15s;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .dpad-btn:active { background: rgba(76,175,80,0.2); }
+    .dpad-up   { grid-column: 2; grid-row: 1; }
+    .dpad-left { grid-column: 1; grid-row: 2; }
+    .dpad-down { grid-column: 2; grid-row: 2; }
+    .dpad-right{ grid-column: 3; grid-row: 2; }
+
+    @media (max-width: 560px) {
+      .dpad { display: grid; }
+      .hint  { display: none; }
+    }
+  </style>
+</head>
+<body>
+
+<nav class="game-nav">
+  <a href="index.html" class="home-btn">← 홈으로</a>
+  <span class="nav-title">🐍 뱀 게임</span>
+</nav>
+
+<h1>🐍 뱀 게임</h1>
+<p class="subtitle">먹이를 먹어 뱀을 키우세요</p>
+
+<div class="score-bar">
+  <div class="score-box">
+    <div class="score-label">점수</div>
+    <div class="score-value" id="score">0</div>
+  </div>
+  <div class="score-box">
+    <div class="score-label">최고 점수</div>
+    <div class="score-value" id="best">0</div>
+  </div>
+</div>
+
+<div id="canvas-wrap">
+  <canvas id="c"></canvas>
+  <div id="msg-layer">
+    <div class="msg-title" id="msg-title">🐍 뱀 게임</div>
+    <div class="msg-body" id="msg-body">Space 또는 화살표 키로 시작</div>
+    <div class="msg-hint" id="msg-hint"></div>
+  </div>
+</div>
+
+<div class="dpad">
+  <button class="dpad-btn dpad-up"    id="btn-up">▲</button>
+  <button class="dpad-btn dpad-left"  id="btn-left">◀</button>
+  <button class="dpad-btn dpad-down"  id="btn-down">▼</button>
+  <button class="dpad-btn dpad-right" id="btn-right">▶</button>
+</div>
+
+<p class="hint">화살표 키 또는 WASD로 방향 전환 · Space로 시작 / 재시작</p>
+
+<script>
+  const CELL   = 25;
+  const COLS   = 20;
+  const ROWS   = 20;
+  const canvas = document.getElementById('c');
+  const ctx    = canvas.getContext('2d');
+  canvas.width  = COLS * CELL;
+  canvas.height = ROWS * CELL;
+
+  let snake, dir, nextDir, food;
+  let score, best, loop;
+  let state = 'idle'; // idle | running | dead
+
+  best = parseInt(localStorage.getItem('snake-best') || '0');
+  document.getElementById('best').textContent = best;
+
+  /* ── INIT ── */
+  function init() {
+    snake   = [{x:10,y:10},{x:9,y:10},{x:8,y:10}];
+    dir     = {x:1,y:0};
+    nextDir = {x:1,y:0};
+    score   = 0;
+    state   = 'running';
+    placeFood();
+    updateScore();
+    showMsg(false);
+    if (loop) clearInterval(loop);
+    loop = setInterval(tick, 150);
+  }
+
+  function placeFood() {
+    do {
+      food = {x: Math.floor(Math.random()*COLS), y: Math.floor(Math.random()*ROWS)};
+    } while (snake.some(s => s.x===food.x && s.y===food.y));
+  }
+
+  /* ── TICK ── */
+  function tick() {
+    dir = nextDir;
+    const head = {x: snake[0].x + dir.x, y: snake[0].y + dir.y};
+
+    if (head.x < 0 || head.x >= COLS || head.y < 0 || head.y >= ROWS ||
+        snake.some(s => s.x===head.x && s.y===head.y)) {
+      die(); return;
+    }
+
+    snake.unshift(head);
+    const ate = head.x === food.x && head.y === food.y;
+
+    if (ate) {
+      score += 10;
+      if (score > best) { best = score; localStorage.setItem('snake-best', best); }
+      placeFood();
+      const speed = Math.max(60, 150 - Math.floor(score / 50) * 8);
+      clearInterval(loop);
+      loop = setInterval(tick, speed);
+    } else {
+      snake.pop();
+    }
+
+    updateScore();
+    draw();
+  }
+
+  function die() {
+    clearInterval(loop);
+    state = 'dead';
+    draw();
+    setTimeout(() => {
+      showMsg(true, '😵 게임 오버', `점수: ${score}`, 'Space로 다시 시작');
+    }, 180);
+  }
+
+  /* ── DRAW ── */
+  function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // Background
+    ctx.fillStyle = '#111827';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Grid lines
+    ctx.strokeStyle = 'rgba(255,255,255,0.025)';
+    ctx.lineWidth = 0.5;
+    for (let x = 0; x <= COLS; x++) {
+      ctx.beginPath(); ctx.moveTo(x*CELL,0); ctx.lineTo(x*CELL,canvas.height); ctx.stroke();
+    }
+    for (let y = 0; y <= ROWS; y++) {
+      ctx.beginPath(); ctx.moveTo(0,y*CELL); ctx.lineTo(canvas.width,y*CELL); ctx.stroke();
+    }
+
+    // Food
+    const fx = food.x * CELL + CELL/2;
+    const fy = food.y * CELL + CELL/2;
+    ctx.save();
+    ctx.shadowBlur = 14;
+    ctx.shadowColor = '#ef4444';
+    ctx.fillStyle = '#ef4444';
+    ctx.beginPath();
+    ctx.arc(fx, fy, CELL/2 - 3, 0, Math.PI*2);
+    ctx.fill();
+    ctx.restore();
+
+    // Snake
+    snake.forEach((seg, i) => {
+      const p = 2;
+      const x = seg.x * CELL + p;
+      const y = seg.y * CELL + p;
+      const w = CELL - p*2;
+
+      ctx.save();
+      if (i === 0) {
+        ctx.shadowBlur = 10;
+        ctx.shadowColor = '#4caf50';
+        ctx.fillStyle = state === 'dead' ? '#ef4444' : '#4caf50';
+      } else {
+        const a = Math.max(0.35, 1 - i * 0.025);
+        ctx.fillStyle = state === 'dead'
+          ? `rgba(239,68,68,${a})`
+          : `rgba(76,175,80,${a})`;
+      }
+      ctx.beginPath();
+      ctx.roundRect(x, y, w, w, 4);
+      ctx.fill();
+      ctx.restore();
+    });
+  }
+
+  function drawIdle() {
+    ctx.fillStyle = '#111827';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    // Faint grid
+    ctx.strokeStyle = 'rgba(255,255,255,0.025)';
+    ctx.lineWidth = 0.5;
+    for (let x = 0; x <= COLS; x++) {
+      ctx.beginPath(); ctx.moveTo(x*CELL,0); ctx.lineTo(x*CELL,canvas.height); ctx.stroke();
+    }
+    for (let y = 0; y <= ROWS; y++) {
+      ctx.beginPath(); ctx.moveTo(0,y*CELL); ctx.lineTo(canvas.width,y*CELL); ctx.stroke();
+    }
+  }
+
+  function showMsg(show, title='', body='', hint='') {
+    const layer = document.getElementById('msg-layer');
+    if (!show) { layer.classList.add('hidden'); return; }
+    layer.classList.remove('hidden');
+    document.getElementById('msg-title').textContent = title;
+    document.getElementById('msg-body').textContent  = body;
+    document.getElementById('msg-hint').textContent  = hint;
+  }
+
+  function updateScore() {
+    document.getElementById('score').textContent = score;
+    document.getElementById('best').textContent  = best;
+  }
+
+  /* ── INPUT ── */
+  const KEY_MAP = {
+    ArrowUp:{x:0,y:-1}, w:{x:0,y:-1}, W:{x:0,y:-1},
+    ArrowDown:{x:0,y:1}, s:{x:0,y:1}, S:{x:0,y:1},
+    ArrowLeft:{x:-1,y:0}, a:{x:-1,y:0}, A:{x:-1,y:0},
+    ArrowRight:{x:1,y:0}, d:{x:1,y:0}, D:{x:1,y:0},
+  };
+
+  function tryDir(nd) {
+    if (!nd) return;
+    if (nd.x === -dir.x && nd.y === -dir.y) return;
+    nextDir = nd;
+  }
+
+  document.addEventListener('keydown', e => {
+    if (e.key === ' ') {
+      e.preventDefault();
+      if (state !== 'running') init();
+      return;
+    }
+    if (KEY_MAP[e.key]) { e.preventDefault(); }
+    if (state !== 'running') { if (KEY_MAP[e.key]) init(); return; }
+    tryDir(KEY_MAP[e.key]);
+  });
+
+  // D-pad buttons
+  document.getElementById('btn-up').addEventListener('click',    () => { if(state!=='running')init(); else tryDir({x:0,y:-1}); });
+  document.getElementById('btn-down').addEventListener('click',  () => { if(state!=='running')init(); else tryDir({x:0,y:1}); });
+  document.getElementById('btn-left').addEventListener('click',  () => { if(state!=='running')init(); else tryDir({x:-1,y:0}); });
+  document.getElementById('btn-right').addEventListener('click', () => { if(state!=='running')init(); else tryDir({x:1,y:0}); });
+
+  // Swipe
+  let tx, ty;
+  canvas.addEventListener('touchstart', e => { tx=e.touches[0].clientX; ty=e.touches[0].clientY; e.preventDefault(); }, {passive:false});
+  canvas.addEventListener('touchend', e => {
+    const dx = e.changedTouches[0].clientX - tx;
+    const dy = e.changedTouches[0].clientY - ty;
+    if (Math.abs(dx) < 15 && Math.abs(dy) < 15) { if(state!=='running')init(); return; }
+    if (state !== 'running') { init(); return; }
+    if (Math.abs(dx) > Math.abs(dy))
+      tryDir(dx > 0 ? {x:1,y:0} : {x:-1,y:0});
+    else
+      tryDir(dy > 0 ? {x:0,y:1} : {x:0,y:-1});
+  }, {passive:false});
+
+  // Initial screen
+  drawIdle();
+  showMsg(true, '🐍 뱀 게임', 'Space 또는 화살표 키로 시작', '');
+</script>
+</body>
+</html>
