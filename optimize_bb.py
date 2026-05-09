@@ -67,19 +67,22 @@ JS_CLICK_OK = """
 
 JS_READ_PROFIT = """
 (function() {
-    const body = document.body.innerText || '';
-    // "총 손익" 다음 줄 또는 같은 구역의 % 값
-    const m = body.match(/총 손익[^\\d-]*([+-]?[\\d,]+\\.?\\d*)\\s*%/);
-    if (m) return parseFloat(m[1].replace(/,/g, ''));
-
-    // 방법 2: DOM 탐색
+    function normalize(txt) {
+        // U+2212 수학 마이너스 → 일반 하이픈으로 변환
+        return txt.replace(/−/g, '-');
+    }
     const all = document.querySelectorAll('*');
     for (const el of all) {
         if (!el.children.length && (el.innerText||'').trim() === '총 손익') {
             const next = el.nextElementSibling
                       || (el.parentElement && el.parentElement.nextElementSibling);
             if (next) {
-                const num = parseFloat(next.innerText.replace(/[^-\\d.]/g, ''));
+                const txt = normalize(next.innerText || '');
+                // "%" 포함 값 중 첫 번째 숫자 추출
+                const m = txt.match(/([+-]?[\d,]+\.?\d*)\s*%/);
+                if (m) return parseFloat(m[1].replace(/,/g, ''));
+                // 폴백: 숫자만 추출
+                const num = parseFloat(txt.replace(/[^-\d.]/g, ''));
                 if (!isNaN(num)) return num;
             }
         }
