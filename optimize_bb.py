@@ -1,212 +1,267 @@
 """
-BB Trend Scalper 파라미터 최적화 (CDP 자동화)
+BB Trend Scalper 파라미터 최적화 (pychrome CDP 자동화)
 Phase 1: BB Period × BB Std (45조합)
-Phase 2: Take Profit × Stop Loss (48조합)
+Phase 2: Take Profit × Stop Loss (49조합)
 """
 
-import asyncio
+import pychrome
+import requests
+import time
 import csv
 import itertools
-from playwright.async_api import async_playwright
+import json
 
 # ===================== 설정 =====================
-CDP_URL = "http://localhost:9222"   # TradingView CDP 포트 (확인 후 변경)
-START_DATE = "2026-01-01"           # 백테스트 시작일
-WAIT_AFTER_APPLY = 3.0              # 차트 업데이트 대기 (초) — 느리면 4~5로 늘릴 것
+CDP_URL    = "http://localhost:9222"
+START_DATE = "2026-01-01"
+WAIT_CHART = 4.0   # 차트 업데이트 대기(초) — 느리면 5~6으로 늘릴 것
 
 # Phase 1: BB 핵심 파라미터
-BB_PERIODS = list(range(5, 22, 2))   # 5,7,9,11,13,15,17,19,21
-BB_STDS    = [0.5, 1.0, 1.5, 2.0, 2.5]
+BB_PERIODS = list(range(5, 22, 2))        # 5,7,9,11,13,15,17,19,21
+BB_STDS    = [0.5, 1.0, 1.5, 2.0, 2.5]   # 5가지
 
-# Phase 2: 리스크 파라미터 (Phase 1 최적값 사용)
-TAKE_PROFITS = list(range(20, 141, 20))  # 20,40,60,80,100,120,140
+# Phase 2: 리스크 파라미터 (Phase 1 최적값 고정)
+TAKE_PROFITS = list(range(20, 141, 20))   # 20,40,60,80,100,120,140
 STOP_LOSSES  = [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 4.0]
 
-# 설정창 input 인덱스 (스크린샷 기준 순서)
-IDX_START_DATE  = 0
-IDX_BB_PERIOD   = 4
-IDX_BB_STD      = 5
-IDX_NOISE       = 6
-IDX_TAKE_PROFIT = 8
-IDX_STOP_LOSS   = 10
-
-PHASE1_CSV = "phase1_results.csv"
-PHASE2_CSV = "phase2_results.csv"
+# 설정창 input 인덱스 (스크린샷 순서 기준)
+IDX = {
+    "start_date":  0,   # Start Time 날짜
+    "bb_period":   4,   # BB Period
+    "bb_std":      5,   # BB 표준편차
+    "take_profit": 8,   # Take Profit (%)
+    "stop_loss":   10,  # Stop Loss (%)
+}
 # ================================================
 
+# ── JavaScript 헬퍼 ──────────────────────────────
 
-async def connect(playwright):
-    browser = await playwright.chromium.connect_over_cdp(CDP_URL)
-    context = browser.contexts[0]
-    page    = context.pages[0]
-    print(f"연결: {page.url[:80]}")
-    return browser, page
-
-
-async def open_settings(page):
-    """BB Trend Scalper 설정창 열기"""
-    legend = page.locator('[data-name="legend-source-item"]').filter(has_text="BB Trend Scalper")
-    await legend.hover()
-    await asyncio.sleep(0.3)
-    await page.locator('[data-name="legend-settings-action"]').first.click()
-    await page.wait_for_selector('[data-name="indicator-properties-dialog"]', timeout=10000)
-    await asyncio.sleep(0.5)
-
-
-async def set_input(dialog, index: int, value):
-    """설정창 n번째 input에 값 입력"""
-    inp = dialog.locator('input').nth(index)
-    await inp.triple_click()
-    await inp.fill(str(value))
-    await inp.press("Tab")
-    await asyncio.sleep(0.15)
-
-
-async def apply_settings(page):
-    """OK 클릭 후 차트 업데이트 대기"""
-    await page.locator('button[data-name="submit-button"]').click()
-    await asyncio.sleep(WAIT_AFTER_APPLY)
-
-
-async def read_net_profit(page) -> float | None:
-    """Strategy Tester 패널에서 순수익률(%) 읽기"""
-    value = await page.evaluate("""() => {
-        // 'Net Profit' 레이블 옆 값 탐색
-        const labels = document.querySelectorAll('[class*="title"], [class*="label"]');
-        for (const lbl of labels) {
-            if (lbl.innerText && lbl.innerText.trim() === 'Net Profit') {
-                const parent  = lbl.closest('[class*="item"], [class*="row"], tr');
-                const sibling = parent ? parent.querySelector('[class*="value"], [class*="amount"], td + td') : null;
-                if (sibling) {
-                    const txt = sibling.innerText.replace(/[^\\-\\d.]/g, '');
-                    const num = parseFloat(txt);
-                    if (!isNaN(num)) return num;
-                }
-            }
+JS_OPEN_SETTINGS = """
+(function() {
+    const items = document.querySelectorAll('[data-name="legend-source-item"]');
+    for (const item of items) {
+        if (item.textContent.includes('BB Trend Scalper')) {
+            item.dispatchEvent(new MouseEvent('mouseenter', {bubbles: true}));
+            item.dispatchEvent(new MouseEvent('mouseover',  {bubbles: true}));
+            const btn = item.querySelector('[data-name="legend-settings-action"]');
+            if (btn) { btn.click(); return 'ok'; }
+            return 'no-btn';
         }
-        // 폴백: % 포함 요소 중 첫 번째 숫자
-        const cells = document.querySelectorAll('[class*="profit"], [class*="Profit"]');
-        for (const el of cells) {
-            const txt = el.innerText || '';
-            if (txt.includes('%')) {
-                const num = parseFloat(txt.replace(/[^\\-\\d.]/g, ''));
+    }
+    return 'not-found';
+})()
+"""
+
+JS_DIALOG_OPEN = "!!document.querySelector('[data-name=\"indicator-properties-dialog\"]')"
+
+JS_SET_INPUT = """
+(function(idx, val) {
+    const dlg = document.querySelector('[data-name="indicator-properties-dialog"]');
+    if (!dlg) return 'no-dialog';
+    const inp = dlg.querySelectorAll('input')[idx];
+    if (!inp) return 'no-input';
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+    setter.call(inp, String(val));
+    inp.dispatchEvent(new Event('input',  {bubbles: true}));
+    inp.dispatchEvent(new Event('change', {bubbles: true}));
+    return 'ok';
+})(%d, %s)
+"""
+
+JS_CLICK_OK = """
+(function() {
+    const btn = document.querySelector('button[data-name="submit-button"]');
+    if (btn) { btn.click(); return true; }
+    return false;
+})()
+"""
+
+JS_READ_PROFIT = """
+(function() {
+    // 방법 1: "Net Profit" 텍스트 옆 값 탐색
+    const all = document.querySelectorAll('*');
+    for (const el of all) {
+        if (!el.children.length && (el.innerText || '').trim() === 'Net Profit') {
+            const siblings = [
+                el.nextElementSibling,
+                el.parentElement && el.parentElement.nextElementSibling,
+                el.closest('tr') && el.closest('tr').querySelector('td:nth-child(2)')
+            ];
+            for (const s of siblings) {
+                if (!s) continue;
+                const num = parseFloat(s.innerText.replace(/[^-\d.]/g, ''));
                 if (!isNaN(num)) return num;
             }
         }
-        return null;
-    }""")
-    return value
+    }
+    // 방법 2: class에 profit/Profit 포함 요소 중 % 있는 값
+    const cells = document.querySelectorAll('[class*="profit"],[class*="Profit"]');
+    for (const el of cells) {
+        const txt = el.innerText || '';
+        if (txt.includes('%')) {
+            const num = parseFloat(txt.replace(/[^-\d.]/g, ''));
+            if (!isNaN(num)) return num;
+        }
+    }
+    return null;
+})()
+"""
 
 
-def save_csv(filename: str, rows: list, fieldnames: list):
+def js(tab, expr):
+    """JavaScript 실행 → 결과값 반환"""
+    res = tab.Runtime.evaluate(expression=expr, returnByValue=True)
+    r = res.get("result", {})
+    if r.get("type") == "undefined":
+        return None
+    return r.get("value")
+
+
+def get_chart_tab():
+    """TradingView 차트 탭에 연결된 pychrome Tab 반환"""
+    tabs_info = requests.get(f"{CDP_URL}/json").json()
+    chart = next(
+        (t for t in tabs_info if "tradingview.com/chart" in t.get("url", "")),
+        None
+    )
+    if not chart:
+        raise RuntimeError("TradingView 차트 탭을 찾을 수 없습니다.")
+
+    browser = pychrome.Browser(url=CDP_URL)
+    tabs    = browser.list_tab()
+    tab     = next((t for t in tabs if t.id == chart["id"]), tabs[0])
+    tab.start()
+    return tab
+
+
+def open_settings(tab):
+    """BB Trend Scalper 설정창 열기 (최대 3초 대기)"""
+    js(tab, JS_OPEN_SETTINGS)
+    for _ in range(10):
+        if js(tab, JS_DIALOG_OPEN):
+            time.sleep(0.3)
+            return
+        time.sleep(0.3)
+    raise RuntimeError("설정창 열기 실패")
+
+
+def set_params(tab, params: dict):
+    """파라미터 dict를 순서대로 입력"""
+    for key, val in params.items():
+        result = js(tab, JS_SET_INPUT % (IDX[key], repr(str(val))))
+        if result != "ok":
+            raise RuntimeError(f"입력 실패: {key}={val} → {result}")
+        time.sleep(0.12)
+
+
+def apply_and_wait(tab):
+    """OK 클릭 후 차트 업데이트 대기"""
+    js(tab, JS_CLICK_OK)
+    time.sleep(WAIT_CHART)
+
+
+def read_profit(tab):
+    """Strategy Tester 순수익률(%) 읽기"""
+    return js(tab, JS_READ_PROFIT)
+
+
+def run_combo(tab, params: dict):
+    """단일 파라미터 조합 테스트 → 수익률 반환"""
+    open_settings(tab)
+    set_params(tab, {"start_date": START_DATE, **params})
+    apply_and_wait(tab)
+    return read_profit(tab)
+
+
+def save_csv(filename, rows, fields):
     with open(filename, "w", newline="", encoding="utf-8-sig") as f:
-        w = csv.DictWriter(f, fieldnames=fieldnames)
+        w = csv.DictWriter(f, fieldnames=fields)
         w.writeheader()
         w.writerows(rows)
-    print(f"저장: {filename}")
+    print(f"  → 저장: {filename}")
 
 
 # ─────────────────────────────────────────────
 #  Phase 1: BB Period × BB Std
 # ─────────────────────────────────────────────
-async def phase1(page) -> dict:
+def phase1(tab) -> dict | None:
     combos = list(itertools.product(BB_PERIODS, BB_STDS))
     total  = len(combos)
     rows   = []
-
-    print(f"\n=== Phase 1 시작 ({total}조합) ===")
+    print(f"\n=== Phase 1 시작 ({total}조합, 예상 {total * WAIT_CHART / 60:.0f}분) ===")
 
     for i, (bp, bs) in enumerate(combos):
         print(f"  [{i+1:2}/{total}] BB_Period={bp:2}  BB_Std={bs}", end="  ", flush=True)
         try:
-            await open_settings(page)
-            dlg = page.locator('[data-name="indicator-properties-dialog"]')
-
-            await set_input(dlg, IDX_START_DATE, START_DATE)
-            await set_input(dlg, IDX_BB_PERIOD,  bp)
-            await set_input(dlg, IDX_BB_STD,     bs)
-
-            await apply_settings(page)
-            profit = await read_net_profit(page)
+            profit = run_combo(tab, {"bb_period": bp, "bb_std": bs})
             print(f"→ {profit}%")
         except Exception as e:
             profit = None
             print(f"→ 오류: {e}")
-
         rows.append({"bb_period": bp, "bb_std": bs, "net_profit_pct": profit})
 
-    save_csv(PHASE1_CSV, rows, ["bb_period", "bb_std", "net_profit_pct"])
+    save_csv("phase1_results.csv", rows, ["bb_period", "bb_std", "net_profit_pct"])
 
     valid = [r for r in rows if r["net_profit_pct"] is not None]
     best  = max(valid, key=lambda r: r["net_profit_pct"]) if valid else None
-    print(f"\nPhase 1 최적: {best}")
+    print(f"Phase 1 최적: {best}")
     return best
 
 
 # ─────────────────────────────────────────────
 #  Phase 2: Take Profit × Stop Loss
 # ─────────────────────────────────────────────
-async def phase2(page, best_p1: dict):
+def phase2(tab, best_p1: dict) -> dict | None:
     combos = list(itertools.product(TAKE_PROFITS, STOP_LOSSES))
     total  = len(combos)
+    bp, bs = best_p1["bb_period"], best_p1["bb_std"]
     rows   = []
-
-    print(f"\n=== Phase 2 시작 ({total}조합)  BB_Period={best_p1['bb_period']}  BB_Std={best_p1['bb_std']} ===")
+    print(f"\n=== Phase 2 시작 ({total}조합, 예상 {total * WAIT_CHART / 60:.0f}분)"
+          f"  BB_Period={bp}  BB_Std={bs} ===")
 
     for i, (tp, sl) in enumerate(combos):
         print(f"  [{i+1:2}/{total}] TP={tp:3}%  SL={sl}", end="  ", flush=True)
         try:
-            await open_settings(page)
-            dlg = page.locator('[data-name="indicator-properties-dialog"]')
-
-            await set_input(dlg, IDX_START_DATE,  START_DATE)
-            await set_input(dlg, IDX_BB_PERIOD,   best_p1["bb_period"])
-            await set_input(dlg, IDX_BB_STD,      best_p1["bb_std"])
-            await set_input(dlg, IDX_TAKE_PROFIT, tp)
-            await set_input(dlg, IDX_STOP_LOSS,   sl)
-
-            await apply_settings(page)
-            profit = await read_net_profit(page)
+            profit = run_combo(tab, {"bb_period": bp, "bb_std": bs,
+                                     "take_profit": tp, "stop_loss": sl})
             print(f"→ {profit}%")
         except Exception as e:
             profit = None
             print(f"→ 오류: {e}")
+        rows.append({"bb_period": bp, "bb_std": bs,
+                     "take_profit": tp, "stop_loss": sl, "net_profit_pct": profit})
 
-        rows.append({
-            "bb_period": best_p1["bb_period"],
-            "bb_std":    best_p1["bb_std"],
-            "take_profit": tp,
-            "stop_loss":   sl,
-            "net_profit_pct": profit,
-        })
-
-    save_csv(PHASE2_CSV, rows, ["bb_period", "bb_std", "take_profit", "stop_loss", "net_profit_pct"])
+    save_csv("phase2_results.csv", rows,
+             ["bb_period", "bb_std", "take_profit", "stop_loss", "net_profit_pct"])
 
     valid = [r for r in rows if r["net_profit_pct"] is not None]
     best  = max(valid, key=lambda r: r["net_profit_pct"]) if valid else None
-    print(f"\nPhase 2 최적: {best}")
+    print(f"Phase 2 최적: {best}")
     return best
 
 
 # ─────────────────────────────────────────────
 #  메인
 # ─────────────────────────────────────────────
-async def main():
-    async with async_playwright() as p:
-        browser, page = await connect(p)
+def main():
+    print("TradingView 연결 중...")
+    tab   = get_chart_tab()
+    title = js(tab, "document.title")
+    print(f"연결 성공: {title}")
 
-        # Strategy Tester 탭이 열려 있는지 확인
-        input("TradingView에서 Strategy Tester 탭을 열어두었는지 확인 후 Enter 입력...")
+    input("\nTradingView에서 [Strategy Tester] 탭 열어두고 Enter 입력...")
 
-        best_p1 = await phase1(page)
+    best_p1 = phase1(tab)
 
-        if best_p1:
-            best_p2 = await phase2(page, best_p1)
-            print("\n=== 최종 최적 파라미터 ===")
-            print(best_p2)
-        else:
-            print("Phase 1 실패 — CDP 연결/선택자 확인 필요")
+    if best_p1:
+        best_p2 = phase2(tab, best_p1)
+        print("\n=== 최종 최적 파라미터 ===")
+        print(json.dumps(best_p2, indent=2, ensure_ascii=False))
+    else:
+        print("Phase 1 실패 — 선택자 확인 필요")
+
+    tab.stop()
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
