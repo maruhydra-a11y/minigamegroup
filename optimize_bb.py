@@ -78,29 +78,29 @@ JS_CLICK_OK = """
 
 JS_READ_PROFIT = """
 (function() {
-    // 방법 1: "Net Profit" 텍스트 옆 값 탐색
+    // 방법 1: "총 손익" 텍스트 포함 요소 → 바로 다음 % 값 탐색 (한국어 TradingView)
     const all = document.querySelectorAll('*');
     for (const el of all) {
-        if (!el.children.length && (el.innerText || '').trim() === 'Net Profit') {
-            const siblings = [
+        const txt = (el.innerText || '').trim();
+        if (!el.children.length && (txt === '총 손익' || txt === 'Net Profit')) {
+            const candidates = [
                 el.nextElementSibling,
                 el.parentElement && el.parentElement.nextElementSibling,
-                el.closest('tr') && el.closest('tr').querySelector('td:nth-child(2)')
             ];
-            for (const s of siblings) {
-                if (!s) continue;
-                const num = parseFloat(s.innerText.replace(/[^-\d.]/g, ''));
+            for (const c of candidates) {
+                if (!c) continue;
+                // "+43,247.76%" 형태 파싱
+                const raw = c.innerText.replace(/[^-\d.]/g, '');
+                const num = parseFloat(raw);
                 if (!isNaN(num)) return num;
             }
         }
     }
-    // 방법 2: class에 profit/Profit 포함 요소 중 % 있는 값
-    const cells = document.querySelectorAll('[class*="profit"],[class*="Profit"]');
-    for (const el of cells) {
-        const txt = el.innerText || '';
-        if (txt.includes('%')) {
-            const num = parseFloat(txt.replace(/[^-\d.]/g, ''));
-            if (!isNaN(num)) return num;
+    // 방법 2: "총 손익" 포함 부모 컨테이너에서 % 값 추출
+    for (const el of all) {
+        if ((el.innerText || '').includes('총 손익')) {
+            const pct = el.innerText.match(/([+-]?[\d,]+\.?\d*)\s*%/);
+            if (pct) return parseFloat(pct[1].replace(/,/g, ''));
         }
     }
     return null;
