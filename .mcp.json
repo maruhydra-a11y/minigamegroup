@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "tradingview": {
+      "command": "node",
+      "args": ["C:/Users/HOME/OneDrive/문서/CLAUDE/tradingview-mcp-aibridge/src/server.js"]
+    }
+  }
+}
