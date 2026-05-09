@@ -14,93 +14,74 @@ import json
 # ===================== 설정 =====================
 CDP_URL    = "http://localhost:9222"
 START_DATE = "2026-01-01"
-WAIT_CHART = 4.0   # 차트 업데이트 대기(초) — 느리면 5~6으로 늘릴 것
+WAIT_CHART = 4.0   # 차트 업데이트 대기(초)
 
 # Phase 1: BB 핵심 파라미터
 BB_PERIODS = list(range(5, 22, 2))        # 5,7,9,11,13,15,17,19,21
-BB_STDS    = [0.5, 1.0, 1.5, 2.0, 2.5]   # 5가지
+BB_STDS    = [0.5, 1.0, 1.5, 2.0, 2.5]
 
-# Phase 2: 리스크 파라미터 (Phase 1 최적값 고정)
+# Phase 2: 리스크 파라미터
 TAKE_PROFITS = list(range(20, 141, 20))   # 20,40,60,80,100,120,140
 STOP_LOSSES  = [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 4.0]
 
-# 설정창 input 인덱스 (스크린샷 순서 기준)
+# 설정창 input 실제 인덱스 (확인 완료)
 IDX = {
-    "start_date":  0,   # Start Time 날짜
-    "bb_period":   4,   # BB Period
-    "bb_std":      5,   # BB 표준편차
-    "take_profit": 8,   # Take Profit (%)
-    "stop_loss":   10,  # Stop Loss (%)
+    "start_date":  2,
+    "bb_period":   6,
+    "bb_std":      7,
+    "take_profit": 10,
+    "stop_loss":   12,
 }
 # ================================================
 
-# ── JavaScript 헬퍼 ──────────────────────────────
-
-JS_OPEN_SETTINGS = """
-(function() {
-    const items = document.querySelectorAll('[data-name="legend-source-item"]');
-    for (const item of items) {
-        if (item.textContent.includes('BB Trend Scalper')) {
-            item.dispatchEvent(new MouseEvent('mouseenter', {bubbles: true}));
-            item.dispatchEvent(new MouseEvent('mouseover',  {bubbles: true}));
-            const btn = item.querySelector('[data-name="legend-settings-action"]');
-            if (btn) { btn.click(); return 'ok'; }
-            return 'no-btn';
-        }
-    }
-    return 'not-found';
-})()
-"""
-
-JS_DIALOG_OPEN = "!!document.querySelector('[data-name=\"indicator-properties-dialog\"]')"
-
 JS_SET_INPUT = """
 (function(idx, val) {
-    const dlg = document.querySelector('[data-name="indicator-properties-dialog"]');
-    if (!dlg) return 'no-dialog';
-    const inp = dlg.querySelectorAll('input')[idx];
-    if (!inp) return 'no-input';
+    const inp = document.querySelectorAll('input')[idx];
+    if (!inp) return 'no-input-' + idx;
+    inp.focus();
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
     setter.call(inp, String(val));
     inp.dispatchEvent(new Event('input',  {bubbles: true}));
     inp.dispatchEvent(new Event('change', {bubbles: true}));
-    return 'ok';
+    inp.dispatchEvent(new KeyboardEvent('keydown',  {key:'Tab', bubbles:true}));
+    inp.dispatchEvent(new KeyboardEvent('keyup',    {key:'Tab', bubbles:true}));
+    return inp.value;
 })(%d, %s)
 """
 
 JS_CLICK_OK = """
 (function() {
-    const btn = document.querySelector('button[data-name="submit-button"]');
-    if (btn) { btn.click(); return true; }
-    return false;
+    const btns = document.querySelectorAll('button');
+    for (const btn of btns) {
+        const txt = btn.textContent.trim();
+        if (txt === '확인' || txt === 'OK' || txt === 'Apply') {
+            btn.click(); return txt;
+        }
+    }
+    // data-name 으로 시도
+    const sub = document.querySelector('[data-name="submit-button"]');
+    if (sub) { sub.click(); return 'submit-btn'; }
+    return 'not-found';
 })()
 """
 
 JS_READ_PROFIT = """
 (function() {
-    // 방법 1: "총 손익" 텍스트 포함 요소 → 바로 다음 % 값 탐색 (한국어 TradingView)
+    const body = document.body.innerText || '';
+    // "총 손익" 다음 줄 또는 같은 구역의 % 값
+    const m = body.match(/총 손익[^\\d-]*([+-]?[\\d,]+\\.?\\d*)\\s*%/);
+    if (m) return parseFloat(m[1].replace(/,/g, ''));
+
+    // 방법 2: DOM 탐색
     const all = document.querySelectorAll('*');
     for (const el of all) {
-        const txt = (el.innerText || '').trim();
-        if (!el.children.length && (txt === '총 손익' || txt === 'Net Profit')) {
-            const candidates = [
-                el.nextElementSibling,
-                el.parentElement && el.parentElement.nextElementSibling,
-            ];
-            for (const c of candidates) {
-                if (!c) continue;
-                // "+43,247.76%" 형태 파싱
-                const raw = c.innerText.replace(/[^-\d.]/g, '');
-                const num = parseFloat(raw);
+        if (!el.children.length && (el.innerText||'').trim() === '총 손익') {
+            const next = el.nextElementSibling
+                      || (el.parentElement && el.parentElement.nextElementSibling);
+            if (next) {
+                const num = parseFloat(next.innerText.replace(/[^-\\d.]/g, ''));
                 if (!isNaN(num)) return num;
             }
-        }
-    }
-    // 방법 2: "총 손익" 포함 부모 컨테이너에서 % 값 추출
-    for (const el of all) {
-        if ((el.innerText || '').includes('총 손익')) {
-            const pct = el.innerText.match(/([+-]?[\d,]+\.?\d*)\s*%/);
-            if (pct) return parseFloat(pct[1].replace(/,/g, ''));
         }
     }
     return null;
@@ -109,24 +90,27 @@ JS_READ_PROFIT = """
 
 
 def js(tab, expr):
-    """JavaScript 실행 → 결과값 반환"""
-    res = tab.Runtime.evaluate(expression=expr, returnByValue=True)
-    r = res.get("result", {})
-    if r.get("type") == "undefined":
-        return None
-    return r.get("value")
+    r = tab.Runtime.evaluate(expression=expr, returnByValue=True)
+    return r.get("result", {}).get("value")
+
+
+def mouse_move(tab, x, y):
+    tab.Input.dispatchMouseEvent(type="mouseMoved", x=x, y=y)
+
+
+def mouse_click(tab, x, y):
+    tab.Input.dispatchMouseEvent(type="mousePressed", x=x, y=y, button="left", clickCount=1)
+    time.sleep(0.05)
+    tab.Input.dispatchMouseEvent(type="mouseReleased", x=x, y=y, button="left", clickCount=1)
 
 
 def get_chart_tab():
-    """TradingView 차트 탭에 연결된 pychrome Tab 반환"""
     tabs_info = requests.get(f"{CDP_URL}/json").json()
     chart = next(
-        (t for t in tabs_info if "tradingview.com/chart" in t.get("url", "")),
-        None
+        (t for t in tabs_info if "tradingview.com/chart" in t.get("url", "")), None
     )
     if not chart:
         raise RuntimeError("TradingView 차트 탭을 찾을 수 없습니다.")
-
     browser = pychrome.Browser(url=CDP_URL)
     tabs    = browser.list_tab()
     tab     = next((t for t in tabs if t.id == chart["id"]), tabs[0])
@@ -135,38 +119,77 @@ def get_chart_tab():
 
 
 def open_settings(tab):
-    """BB Trend Scalper 설정창 열기 (최대 3초 대기)"""
-    js(tab, JS_OPEN_SETTINGS)
+    """BB Trend Scalper 설정창 열기 (CDP 마우스 이벤트 사용)"""
+    # 1) 제목 위로 hover
+    title_pos = js(tab, """(function(){
+        const t=[...document.querySelectorAll('.title-l31H9iuA')]
+                 .find(t=>t.textContent.includes('BB Trend Scalper'));
+        if(!t) return null;
+        const r=t.getBoundingClientRect();
+        return JSON.stringify({x:r.x+r.width/2, y:r.y+r.height/2});
+    })()""")
+    if not title_pos:
+        raise RuntimeError("BB Trend Scalper 제목을 찾을 수 없습니다.")
+    p = json.loads(title_pos)
+    mouse_move(tab, p["x"], p["y"])
+    time.sleep(0.6)
+
+    # 2) 설정 버튼 위치 → 클릭
+    btn_pos = js(tab, """(function(){
+        const titles=document.querySelectorAll('.title-l31H9iuA');
+        for(const t of titles){
+            if(t.textContent.includes('BB Trend Scalper')){
+                let el=t;
+                for(let i=0;i<8;i++){
+                    el=el.parentElement; if(!el) break;
+                    const btn=el.querySelector('[data-qa-id="legend-settings-action"]');
+                    if(btn){
+                        const r=btn.getBoundingClientRect();
+                        return JSON.stringify({x:r.x+r.width/2, y:r.y+r.height/2});
+                    }
+                }
+            }
+        }
+        return null;
+    })()""")
+    if not btn_pos:
+        raise RuntimeError("설정 버튼을 찾을 수 없습니다.")
+    b = json.loads(btn_pos)
+    mouse_move(tab, b["x"], b["y"])
+    time.sleep(0.2)
+    mouse_click(tab, b["x"], b["y"])
+
+    # 3) 설정창 열릴 때까지 대기 (최대 5초)
     for _ in range(10):
-        if js(tab, JS_DIALOG_OPEN):
+        cnt = js(tab, "document.querySelectorAll('input').length")
+        if cnt and cnt > 5:
             time.sleep(0.3)
             return
-        time.sleep(0.3)
-    raise RuntimeError("설정창 열기 실패")
+        time.sleep(0.5)
+    raise RuntimeError("설정창이 열리지 않았습니다.")
 
 
 def set_params(tab, params: dict):
-    """파라미터 dict를 순서대로 입력"""
     for key, val in params.items():
         result = js(tab, JS_SET_INPUT % (IDX[key], repr(str(val))))
-        if result != "ok":
-            raise RuntimeError(f"입력 실패: {key}={val} → {result}")
-        time.sleep(0.12)
+        if result is None or "no-input" in str(result):
+            raise RuntimeError(f"입력 실패: {key}={val} (index={IDX[key]}, result={result})")
+        time.sleep(0.1)
 
 
 def apply_and_wait(tab):
-    """OK 클릭 후 차트 업데이트 대기"""
-    js(tab, JS_CLICK_OK)
+    result = js(tab, JS_CLICK_OK)
+    if result == "not-found":
+        # 좌표로 OK 버튼 찾기 시도
+        raise RuntimeError("OK 버튼을 찾을 수 없습니다.")
     time.sleep(WAIT_CHART)
 
 
 def read_profit(tab):
-    """Strategy Tester 순수익률(%) 읽기"""
     return js(tab, JS_READ_PROFIT)
 
 
 def run_combo(tab, params: dict):
-    """단일 파라미터 조합 테스트 → 수익률 반환"""
     open_settings(tab)
     set_params(tab, {"start_date": START_DATE, **params})
     apply_and_wait(tab)
@@ -181,9 +204,6 @@ def save_csv(filename, rows, fields):
     print(f"  → 저장: {filename}")
 
 
-# ─────────────────────────────────────────────
-#  Phase 1: BB Period × BB Std
-# ─────────────────────────────────────────────
 def phase1(tab) -> dict | None:
     combos = list(itertools.product(BB_PERIODS, BB_STDS))
     total  = len(combos)
@@ -201,16 +221,12 @@ def phase1(tab) -> dict | None:
         rows.append({"bb_period": bp, "bb_std": bs, "net_profit_pct": profit})
 
     save_csv("phase1_results.csv", rows, ["bb_period", "bb_std", "net_profit_pct"])
-
     valid = [r for r in rows if r["net_profit_pct"] is not None]
     best  = max(valid, key=lambda r: r["net_profit_pct"]) if valid else None
     print(f"Phase 1 최적: {best}")
     return best
 
 
-# ─────────────────────────────────────────────
-#  Phase 2: Take Profit × Stop Loss
-# ─────────────────────────────────────────────
 def phase2(tab, best_p1: dict) -> dict | None:
     combos = list(itertools.product(TAKE_PROFITS, STOP_LOSSES))
     total  = len(combos)
@@ -233,32 +249,27 @@ def phase2(tab, best_p1: dict) -> dict | None:
 
     save_csv("phase2_results.csv", rows,
              ["bb_period", "bb_std", "take_profit", "stop_loss", "net_profit_pct"])
-
     valid = [r for r in rows if r["net_profit_pct"] is not None]
     best  = max(valid, key=lambda r: r["net_profit_pct"]) if valid else None
     print(f"Phase 2 최적: {best}")
     return best
 
 
-# ─────────────────────────────────────────────
-#  메인
-# ─────────────────────────────────────────────
 def main():
     print("TradingView 연결 중...")
     tab   = get_chart_tab()
     title = js(tab, "document.title")
     print(f"연결 성공: {title}")
 
-    input("\nTradingView에서 [Strategy Tester] 탭 열어두고 Enter 입력...")
+    input("\nTradingView에서 [전략 리포트] 탭 열어두고 Enter 입력...")
 
     best_p1 = phase1(tab)
-
     if best_p1:
         best_p2 = phase2(tab, best_p1)
         print("\n=== 최종 최적 파라미터 ===")
         print(json.dumps(best_p2, indent=2, ensure_ascii=False))
     else:
-        print("Phase 1 실패 — 선택자 확인 필요")
+        print("Phase 1 실패")
 
     tab.stop()
 
